@@ -33,13 +33,17 @@ parser.add_argument("-t", "--time", action="store_true", required=False,
                     default=False,
                     help="show last dump date")
 
-parser.add_argument("-d", "--dir", action="store", required=False, type=str,
-                    default='./dumps',
-                    help="path to dumps directory")
+parser.add_argument("-a", "--archives_dir", action="store", required=False, type=str,
+                    default='./archives',
+                    help="path to archives directory")
 
 parser.add_argument("-n", "--no_archives", action="store_true", required=False,
                     default=False,
                     help="do not save archives")
+
+parser.add_argument("-d", "--dir", action="store", required=False, type=str,
+                    default='./dump',
+                    help="path to current dump directory")
 
 args = parser.parse_args()
 
@@ -74,26 +78,35 @@ def main():
             return
 
         try:
+            os.mkdir(args.archives_dir)
             os.mkdir(args.dir)
         except OSError:
             pass
 
+        dump_file_path = str(args.dir) + '/dump.xml'
+        result_zipfile = str(args.dir) + '/result.zip'
+
         logger.info('Check if dump.xml already exists.')
-        if os.path.exists('dump.xml'):
+        if os.path.exists(dump_file_path):
             logger.info('dump.xml already exists.')
-            data = ElementTree().parse("dump.xml")
 
-            dt = datetime.strptime(data.attrib['updateTime'][:19], '%Y-%m-%dT%H:%M:%S')
-            updateTime = int(time.mktime(dt.timetuple()))
-            logger.info('Got updateTime: %s.', updateTime)
+            try:
+                data = ElementTree().parse(dump_file_path)
 
-            dt = datetime.strptime(
-                data.attrib['updateTimeUrgently'][:19], '%Y-%m-%dT%H:%M:%S')
-            updateTimeUrgently = int(time.mktime(dt.timetuple()))
-            logger.info('Got updateTimeUrgently: %s.', updateTimeUrgently)
+                dt = datetime.strptime(data.attrib['updateTime'][:19], '%Y-%m-%dT%H:%M:%S')
+                updateTime = int(time.mktime(dt.timetuple()))
+                logger.info('Got updateTime: %s.', updateTime)
 
-            fromFile = max(updateTime, updateTimeUrgently)
-            logger.info('Got latest update time: %s.', fromFile)
+                dt = datetime.strptime(
+                    data.attrib['updateTimeUrgently'][:19], '%Y-%m-%dT%H:%M:%S')
+                updateTimeUrgently = int(time.mktime(dt.timetuple()))
+                logger.info('Got updateTimeUrgently: %s.', updateTimeUrgently)
+
+                fromFile = max(updateTime, updateTimeUrgently)
+                logger.info('Got latest update time: %s.', fromFile)
+            except Exception as error:
+                logger.error('Wrong dump.xml format.')
+                fromFile = 0
         else:
             logger.info('dump.xml does not exist')
             fromFile = 0
@@ -123,26 +136,26 @@ def main():
                                     request['dumpFormatVersion'],
                                     request['operatorName'].decode('utf-8'),
                                     request['inn'])
-                        with open('result.zip', "wb") as f:
+                        with open(result_zipfile, "wb") as f:
                             f.write(b64decode(request['registerZipArchive']))
                         logger.info(
                             'Downloaded dump %d bytes, MD5 hashsum: %s',
-                            os.path.getsize('result.zip'),
+                            os.path.getsize(result_zipfile),
                             hashlib.md5(
                                 open(
-                                    'result.zip',
+                                    result_zipfile,
                                     'rb').read()).hexdigest())
                         try:
                             logger.info('Unpacking.')
-                            zip_file = zipfile.ZipFile('result.zip', 'r')
-                            zip_file.extract('dump.xml', '')
-                            if not args.no_archives:
-                                zip_file.extractall(
-                                    '%s/%s' %
-                                    (args.dir, datetime.now().strftime("%Y-%m-%dT%H-%M-%S")))
+                            zip_file = zipfile.ZipFile(result_zipfile, 'r')
+                            zip_file.extract('dump.xml', args.dir)
                             zip_file.close()
-                        except zipfile.BadZipfile:
-                            logger.error('Wrong file format.')
+                            if not args.no_archives:
+                                move_path = "{}/{}.zip"
+                                move_path = move_path.format(args.archives_dir, datetime.now().strftime("%Y-%m-%dT%H-%M-%S"))
+                                os.rename(result_zipfile, move_path)
+                        except Exception as error:
+                            logger.error(error.message)
                         break
 
                     else:
